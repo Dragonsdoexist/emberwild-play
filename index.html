@@ -163,6 +163,15 @@ button,input,select{font-size:16px!important}.rescue-pad button{font-size:24px!i
 :root{--green:#357347}.growth-detail{color:#494064}.stage-badge{background:var(--green)}
 
 .scene-text h2{color:var(--ink);font-size:24px}.piece-thumb{position:relative;display:block;width:72px;height:72px;overflow:hidden;flex-shrink:0}.piece-choice .piece-thumb img{position:absolute;max-width:none;object-fit:fill}.scene-caption{background:#211c40db;color:var(--cream);padding:5px 8px;text-shadow:none}
+
+/* Drag, snap and stack: stable controls and a nearby touch tray. */
+.build-stage{position:sticky;top:12px;z-index:2}.build-stage canvas{cursor:grab}.build-stage canvas.pan-tool{cursor:grab}.build-dragging,.build-dragging *{cursor:grabbing!important;user-select:none;-webkit-user-select:none}.build-toolbar #build-pan[aria-pressed=true]{background:var(--ink);color:var(--cream)}.piece-choice{cursor:grab;touch-action:pan-y;user-select:none;-webkit-user-select:none}.piece-choice img{pointer-events:none;-webkit-user-drag:none}.piece-choice:disabled{cursor:not-allowed}.build-edit-controls{margin:14px 0}.build-help{font-size:14px;line-height:1.7}.build-help summary{min-height:44px;padding:10px 0;cursor:pointer}.build-help p{font-size:14px;margin:8px 0}.build-stage #build-status{min-height:3em;margin:8px 0 0}.build-stage #build-help{margin:8px 0}.build-box #build-validation{min-height:3em}.build-position{display:none}
+@media(max-width:900px){.build-stage{top:0;padding:8px}.build-stage canvas{height:clamp(190px,32dvh,340px)}.build-layout{gap:10px}.build-box{padding:10px}.build-palette{display:flex;overflow-x:auto;overflow-y:hidden;max-height:none;gap:10px;padding:5px 5px 10px;margin:0 -4px 8px;scroll-snap-type:x proximity;overscroll-behavior-x:contain}.piece-choice{flex:0 0 116px;min-height:130px;scroll-snap-align:start;touch-action:pan-x;gap:3px;padding:6px}.piece-choice .piece-thumb{height:64px}.build-categories{display:flex;gap:5px;margin-bottom:8px;overflow-x:auto}.build-categories button{flex:1;min-width:max-content;padding:8px 5px}.build-toolbar{flex-wrap:nowrap;overflow-x:auto}.build-toolbar button{padding:8px;flex-shrink:0}.build-stage #build-help{font-size:14px;line-height:1.5}.build-stage #build-status:empty{display:none}.build-edit-controls{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.build-edit-controls button{padding:9px 4px;overflow-wrap:anywhere}.build-box select{margin-bottom:6px}}
+@media(prefers-reduced-motion:reduce){.build-palette{scroll-behavior:auto;scroll-snap-type:none}}
+
+.build-carry{position:fixed;z-index:1000;pointer-events:none;opacity:.7;image-rendering:pixelated;filter:drop-shadow(2px 3px 0 #211c4066)}.build-carry img{position:absolute;max-width:none}.build-carry[hidden]{display:none}
+
+@media(max-width:600px){.build-edit-controls{grid-template-columns:1fr 1fr}.build-edit-controls button{min-height:48px;overflow-wrap:normal}.build-stage #build-status{min-height:1.5em}.build-stage canvas{height:clamp(190px,32dvh,300px)}}
 </style>
 </head>
 <body class="pocket-edition">
@@ -1098,11 +1107,12 @@ function createHabitatView(canvas,options={}){
  const ctx=canvas.getContext('2d');
  if(!ctx)throw Error('This browser could not open the habitat canvas.');
  const camera={zoom:1,x:0,y:0},cache=new Map(),hits=[],listeners=[];
- let habitat=null,preview=null,selected=null,layer=0,drag=null,destroyed=false,frame=0,hasFit=false;
+ let habitat=null,preview=null,perchPreview=null,selected=null,layer=0,drag=null,destroyed=false,frame=0,hasFit=false;
  let cssWidth=1,cssHeight=1,ratio=1;
  const tileW=32,tileH=16,stepH=12;
  const project=(x,y,z=0)=>({x:(x-y)*tileW/2,y:(x+y)*tileH/2-z*stepH});
- const unproject=(x,y,z=layer)=>{const yy=y+z*stepH;return {x:Math.floor(yy/tileH+x/tileW+.5),y:Math.floor(yy/tileH-x/tileW+.5),z}};
+ const gridPoint=(x,y,z=layer)=>{const yy=y+z*stepH;return {gridX:yy/tileH+x/tileW,gridY:yy/tileH-x/tileW,z}};
+ const unproject=(x,y,z=layer)=>{const p=gridPoint(x,y,z);return {x:Math.floor(p.gridX+.5),y:Math.floor(p.gridY+.5),z}};
  function queue(){if(!destroyed&&!frame)frame=requestAnimationFrame(()=>{frame=0;render()})}
  function announce(){options.onViewChange?.({...camera});queue()}
  function imageInfo(raw){
@@ -1170,16 +1180,16 @@ function createHabitatView(canvas,options={}){
   if(ghost)footprint(p,preview?.validation?.ok?'#88e5b27a':'#f57e8a9a',preview?.validation?.ok?'#ddffe5':'#ffd1d6');
   drawImage(info,pos.x,pos.y,1,flip,ghost?null:{kind:'piece',id:p.id,placement:p},ghost ? .65 : 1);
  }
- function drawPerch(p){
+ function drawPerch(p,ghost=false){
   const pos=project(p.x,p.y,0);
-  diamond(p.x,p.y,0,selected===p.dragonId?'#f8d67c':'#b6a478','#e1d5a3');
+  diamond(p.x,p.y,0,ghost?(perchPreview.validation.ok?'#88e5b27a':'#f57e8a9a'):selected===p.dragonId?'#f8d67c':'#b6a478',ghost?(perchPreview.validation.ok?'#ddffe5':'#ffd1d6'):'#e1d5a3');
   const meta=options.getDragonArt?.(p.dragonId);
   const info=imageInfo(meta);
   if(info){
    const sw=info.width||info.image.naturalWidth,sh=info.height||info.image.naturalHeight;
    const b=info.bounds||[0,0,sw-1,sh-1];
    const adjusted={...info,anchor:[(b[0]+b[2]+1)/2,b[3]+1],fitWidth:info.fitWidth||34,fitHeight:info.fitHeight||36};
-   drawImage(adjusted,pos.x,pos.y+3,1,false,{kind:'perch',id:p.dragonId,dragonId:p.dragonId,perch:p});
+   drawImage(adjusted,pos.x,pos.y+3,1,false,ghost?null:{kind:'perch',id:p.dragonId,dragonId:p.dragonId,perch:p},ghost?.65:1);
   }
  }
  function resize(){
@@ -1194,6 +1204,11 @@ function createHabitatView(canvas,options={}){
   camera.x=cssWidth/2;camera.y=(cssHeight-160*camera.zoom)/2+35*camera.zoom;
   hasFit=true;announce();return {...camera};
  }
+ function sceneThings(){
+  if(!habitat)return [];
+  const things=[...habitat.placements.map(p=>{const f=builderFootprint(p.type,p.rotation);return {kind:'piece',p,depth:p.x+p.y+(f[0]+f[1]-2)/2+p.z*.01}}),...habitat.perches.map(p=>({kind:'perch',p,depth:p.x+p.y+.02}))];
+  return things.sort((a,b)=>a.depth-b.depth||(a.p.z||0)-(b.p.z||0));
+ }
  function render(){
   if(destroyed)return;const changed=resize();if(!hasFit){fit();return}
   if(changed&&options.autoFit!==false){hasFit=false;fit();return}
@@ -1202,10 +1217,9 @@ function createHabitatView(canvas,options={}){
   ctx.save();ctx.translate(camera.x,camera.y);ctx.scale(camera.zoom,camera.zoom);
   hits.length=0;drawGround();
   if(habitat){
-   const things=[...habitat.placements.map(p=>{const f=builderFootprint(p.type,p.rotation);return {kind:'piece',p,depth:p.x+p.y+(f[0]+f[1]-2)/2+p.z*.01}}),...habitat.perches.map(p=>({kind:'perch',p,depth:p.x+p.y+.02}))];
-   things.sort((a,b)=>a.depth-b.depth||(a.p.z||0)-(b.p.z||0));
-   for(const entry of things)entry.kind==='piece'?drawPart(entry.p):drawPerch(entry.p);
+   for(const entry of sceneThings())entry.kind==='piece'?drawPart(entry.p):drawPerch(entry.p);
    if(preview?.placement)drawPart(preview.placement,true);
+   if(perchPreview?.perch)drawPerch(perchPreview.perch,true);
   }
   ctx.restore();
  }
@@ -1230,15 +1244,68 @@ function createHabitatView(canvas,options={}){
   const mask=info.entry.mask;if(sx<0||sy<0||sx>=mask.width||sy>=mask.height)return false;
   return mask.data[(sy*mask.width+sx)*4+3]>32;
  }
- function hitAt(x,y){
+ function spriteHit(h,x,y){return x>=h.left&&x<h.left+h.width&&y>=h.top&&y<h.top+h.height&&opaque(h,x,y)}
+ function hitAtWorld(x,y,{ignoreId}={}){
   for(let i=hits.length-1;i>=0;i--){
-   const h=hits[i];if(x>=h.left&&x<h.left+h.width&&y>=h.top&&y<h.top+h.height&&opaque(h,x,y))return {kind:h.kind,id:h.id,...(h.placement?{placement:h.placement}:{dragonId:h.dragonId,perch:h.perch})};
+   const h=hits[i];if(h.id!==ignoreId&&spriteHit(h,x,y))return {kind:h.kind,id:h.id,...(h.placement?{placement:h.placement}:{dragonId:h.dragonId,perch:h.perch})};
   }
-  if(habitat)for(const p of habitat.perches){const c=unproject(x,y,0);if(c.x===p.x&&c.y===p.y)return {kind:'perch',id:p.dragonId,dragonId:p.dragonId,perch:p}}
+  if(habitat)for(const p of habitat.perches){const c=unproject(x,y,0);if(p.dragonId!==ignoreId&&c.x===p.x&&c.y===p.y)return {kind:'perch',id:p.dragonId,dragonId:p.dragonId,perch:p}}
   return null;
  }
+ // Pick the same front-to-back geometry that was drawn. A selected layer or
+ // a ground-plane inverse alone would place through block fronts and decorations.
+ function inPolygon(p,points){
+  let inside=false;
+  for(let i=0,j=points.length-1;i<points.length;j=i++){
+   const a=points[i],b=points[j],cross=(p.x-a.x)*(b.y-a.y)-(p.y-a.y)*(b.x-a.x);
+   if(Math.abs(cross)<1e-7&&p.x>=Math.min(a.x,b.x)-1e-7&&p.x<=Math.max(a.x,b.x)+1e-7&&p.y>=Math.min(a.y,b.y)-1e-7&&p.y<=Math.max(a.y,b.y)+1e-7)return true;
+   if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)inside=!inside;
+  }
+  return inside;
+ }
+ function topAt(point,p,z){
+  const g=gridPoint(point.x,point.y,z),f=p.type?builderFootprint(p.type,p.rotation):[1,1];
+  // Shared top-face edges belong to the supporting platform. Projection and
+  // CSS scaling can land a fraction below an exact half-cell coordinate.
+  const epsilon=1e-7;
+  if(g.gridX<p.x-.5-epsilon||g.gridX>p.x+f[0]-.5+epsilon||g.gridY<p.y-.5-epsilon||g.gridY>p.y+f[1]-.5+epsilon)return null;
+  return {...g,x:Math.floor(g.gridX+.5),y:Math.floor(g.gridY+.5)};
+ }
+ function occupiedAt(point,p,z){
+  const g=gridPoint(point.x,point.y,z),f=p.type?builderFootprint(p.type,p.rotation):[1,1];
+  // Tall sprite pixels still target their owner's footprint, never a free cell
+  // behind the sprite. The model then supplies the familiar collision reason.
+  g.gridX=Math.max(p.x-.49,Math.min(p.x+f[0]-.51,g.gridX));
+  g.gridY=Math.max(p.y-.49,Math.min(p.y+f[1]-.51,g.gridY));
+  return {...g,x:Math.floor(g.gridX+.5),y:Math.floor(g.gridY+.5)};
+ }
+ function surfaceAt(clientX,clientY,{ignoreId,groundOnly=false}={}){
+  const box=canvas.getBoundingClientRect();
+  if(!Number.isFinite(clientX)||!Number.isFinite(clientY)||clientX<box.left||clientY<box.top||clientX>=box.left+box.width||clientY>=box.top+box.height)return null;
+  const point=coordinates({clientX,clientY}),things=sceneThings();
+  for(let i=things.length-1;i>=0;i--){
+   const {p,kind}=things[i],id=kind==='perch'?p.dragonId:p.id;
+   if(id===ignoreId)continue;
+   const z=p.z||0,solid=kind==='piece'&&BUILD_PIECES[p.type].support;
+   const top=topAt(point,p,z+(solid?1:0));
+   if(top)return groundOnly?occupiedAt(point,p,0):top;
+   if(solid){
+    for(const c of pieceCells(p)){
+     const t=project(c.x,c.y,c.z+1),b=project(c.x,c.y,c.z);
+     const sides=[[{x:t.x+16,y:t.y},{x:t.x,y:t.y+8},{x:b.x,y:b.y+8},{x:b.x+16,y:b.y}],
+      [{x:t.x,y:t.y+8},{x:t.x-16,y:t.y},{x:b.x-16,y:b.y},{x:b.x,y:b.y+8}]];
+     if(sides.some(points=>inPolygon(point,points)))return groundOnly?occupiedAt(point,p,0):null;
+    }
+   }else{
+    const sprite=hits.find(h=>h.id===id&&h.kind===kind);
+    if(sprite&&spriteHit(sprite,point.x,point.y))return occupiedAt(point,p,groundOnly?0:z);
+   }
+  }
+  const ground=gridPoint(point.x,point.y,0),x=Math.floor(ground.gridX+.5),y=Math.floor(ground.gridY+.5);
+  return x>=0&&y>=0&&x<BUILDER_SIZE&&y<BUILDER_SIZE?{...ground,x,y}:null;
+ }
  function listen(target,name,fn,opts){target.addEventListener(name,fn,opts);listeners.push(()=>target.removeEventListener(name,fn,opts))}
- if(options.interactive!==false){
+ if(options.interactive!==false&&options.controls!==false){
   canvas.style.touchAction='none';
   listen(canvas,'pointerdown',e=>{if(e.button!=null&&e.button!==0)return;const p=coordinates(e);drag={id:e.pointerId,startX:p.px,startY:p.py,lastX:p.px,lastY:p.py,moved:false};(()=>{try{canvas.setPointerCapture?.(e.pointerId)}catch{}})()});
   listen(canvas,'pointermove',e=>{
@@ -1251,7 +1318,7 @@ function createHabitatView(canvas,options={}){
   listen(canvas,'pointerup',e=>{
    if(!drag||drag.id!==e.pointerId)return;
    const moved=drag.moved;drag=null;try{canvas.releasePointerCapture?.(e.pointerId)}catch{};if(moved)return;
-   const p=coordinates(e),cell=unproject(p.x,p.y,layer),hit=hitAt(p.x,p.y);
+   const p=coordinates(e),cell=unproject(p.x,p.y,layer),hit=hitAtWorld(p.x,p.y);
    if(hit)options.onSelect?.(hit);
    if(cell.x>=0&&cell.y>=0&&cell.x<10&&cell.y<10)options.onCell?.(cell,hit);
   });
@@ -1269,10 +1336,12 @@ function createHabitatView(canvas,options={}){
  if(typeof window!=='undefined')listen(window,'blur',()=>{drag=null});
  queue();
  return {
-  setState(h){habitat=h;queue()},setPreview(placement,validation={ok:true}){preview=placement?{placement,validation}:null;queue()},
+  setState(h){habitat=h;queue()},setPreview(placement,validation={ok:true}){preview=placement?{placement,validation}:null;if(placement)perchPreview=null;queue()},
+  setPerchPreview(perch,validation={ok:true}){perchPreview=perch?{perch,validation}:null;if(perch)preview=null;queue()},
   setSelection(id){selected=id;queue()},setLayer(z){layer=Math.max(0,Math.min(3,Math.round(z)||0));queue()},
   zoomBy,panBy(dx,dy){if(Number.isFinite(dx)&&Number.isFinite(dy)){camera.x+=dx;camera.y+=dy;announce()}},
   fit,render,get camera(){return {...camera}},project(x,y,z=0){const p=project(x,y,z);return {x:p.x*camera.zoom+camera.x,y:p.y*camera.zoom+camera.y}},
+  hitAt(clientX,clientY,pickOptions={}){const p=coordinates({clientX,clientY});return hitAtWorld(p.x,p.y,pickOptions)},surfaceAt,
   cellAt(clientX,clientY){const p=coordinates({clientX,clientY});return unproject(p.x,p.y,layer)},
   destroy(){destroyed=true;listeners.splice(0).forEach(fn=>fn());observer?.disconnect();if(frame)cancelAnimationFrame(frame);cache.clear();hits.length=0;drag=null}
  };
@@ -1281,56 +1350,96 @@ function createHabitatView(canvas,options={}){
 
 function createPocketWorkshop(host){
  const panel=document.querySelector('#build-content'),homeCanvas=document.querySelector('#home-habitat');
- let editor=null,home=null,category='Blocks',selection=null,mode='place',type='grass',rotation=0,cell={x:0,y:0,z:0},history=createBuilderHistory(20),rosterKey='',historyRoster=null;
+ let editor=null,home=null,category='Blocks',selection=null,mode='place',type='grass',rotation=0,cell=null,history=createBuilderHistory(20),rosterKey='',paletteKey='',historyRoster=null;
+ let gesture=null,panTool=false,placing=false,suppressClickUntil=0,carry=null;
  const q=selector=>panel.querySelector(selector),escape=host.escape;
  const imageFor=id=>{const s=host.getState(),d=getDragon(s,id);if(!d)return null;const key=`${d.element}:${stageOf(d.xp)}${d.scarf&&stageOf(d.xp)?':scarf':''}`,m=ASSET_MANIFEST.records.find(r=>r.key===key);return {src:POCKET_ASSETS[key],width:m.width,height:m.height,bounds:m.bounds,fitWidth:42,fitHeight:54}};
  const workshopArtCache=new Map();
  const artFor=id=>{if(workshopArtCache.has(id))return workshopArtCache.get(id);const a=ACTIVITY_ART.props[id];if(!a)return null;const adapt=v=>({...v,crop:v.bounds?{x:v.bounds[0],y:v.bounds[1],width:v.bounds[2],height:v.bounds[3]}:undefined});const result=adapt(a);if(a.rotations)result.rotations=Object.fromEntries(Object.entries(a.rotations).map(([angle,v])=>[angle,adapt(v)]));workshopArtCache.set(id,result);return result};
- const thumbnail=id=>{const a=artFor(id);if(!a)return '';const b=a.bounds||[0,0,a.width,a.height],scale=Math.max(1,Math.min(2,Math.floor(64/Math.max(b[2],b[3]))));return `<span class="piece-thumb"><img src="${a.src}" alt="" style="width:${a.width*scale}px;height:${a.height*scale}px;left:${Math.round(36-(b[0]+b[2]/2)*scale)}px;top:${Math.round(36-(b[1]+b[3]/2)*scale)}px"></span>`};
+ const thumbnail=id=>{const a=artFor(id);if(!a)return '';const b=a.bounds||[0,0,a.width,a.height],scale=Math.max(1,Math.min(2,Math.floor(64/Math.max(b[2],b[3]))));return `<span class="piece-thumb"><img draggable="false" src="${a.src}" alt="" style="width:${a.width*scale}px;height:${a.height*scale}px;left:${Math.round(36-(b[0]+b[2]/2)*scale)}px;top:${Math.round(36-(b[1]+b[3]/2)*scale)}px"></span>`};
  const baseOptions={getArt:artFor,getDragonArt:imageFor};
+ const unlocked=()=>availableDecorations(host.getState());
+ const movingId=()=>mode==='move'?selection?.slice(6):undefined;
  function allowed(){return host.getState()?.dragons.some(d=>stageOf(d.xp)>=1)}
- function unlocked(){return availableDecorations(host.getState())}
  function setup(){
-  if(!allowed()){clearHandlers();panel.innerHTML='<div class="locked-card"><h2>A little nest comes first.</h2><p>Your building box opens when your first companion hatches. Keep caring on Home — every tap counts.</p><button class="primary-button" data-view="sanctuary">Back to my egg</button></div>';editor?.destroy();editor=null;return}
+  if(!allowed()){cancel();clearHandlers();panel.innerHTML='<div class="locked-card"><h2>A little nest comes first.</h2><p>Your building box opens when your first companion hatches. Keep caring on Home — every tap counts.</p><button class="primary-button" data-view="sanctuary">Back to my egg</button></div>';editor?.destroy();editor=null;return}
   if(editor){refresh();return}
-  panel.innerHTML=`<div class="build-layout"><section class="build-stage"><div class="build-toolbar" aria-label="Camera controls"><button data-build-camera="fit">Fit</button><button data-build-camera="in" aria-label="Zoom in">+</button><button data-build-camera="out" aria-label="Zoom out">−</button><button data-build-camera="left" aria-label="Pan left">←</button><button data-build-camera="right" aria-label="Pan right">→</button><button data-build-camera="up" aria-label="Pan up">↑</button><button data-build-camera="down" aria-label="Pan down">↓</button></div><canvas id="builder-canvas" width="800" height="560" tabindex="0" aria-label="Habitat grid. Select a square or use the position fields below."></canvas><p class="quiet-note">Drag to pan. Select a square to preview; Place confirms it. Every basic piece is free.</p><p id="build-status" role="status"></p></section><section class="build-box" aria-label="Building box"><div class="build-categories" role="group" aria-label="Piece category">${['Blocks','Paths','Nests','Keepsakes'].map(c=>`<button data-build-category="${c}" aria-pressed="${c===category}">${c}</button>`).join('')}</div><div id="build-palette" class="build-palette"></div><label class="input-label" for="build-selection">Select something already here</label><select id="build-selection"><option value="">New piece</option></select><div class="build-position"><label>Column (1–10)<input id="build-x" type="number" min="1" max="10" value="1"></label><label>Row (1–10)<input id="build-y" type="number" min="1" max="10" value="1"></label><label>Layer (0–3)<input id="build-z" type="number" min="0" max="3" value="0"></label></div><div class="build-edit-controls"><button id="build-rotate" class="secondary-button">Rotate 90°</button><button id="build-place" class="primary-button">Place</button><button id="build-remove" class="secondary-button" disabled>Remove</button><button id="build-undo" class="secondary-button" disabled>Undo</button></div><p id="build-validation" role="status"></p><p class="quiet-note">Blocks support the next layer. Keep four ground spaces clear for your companions. No material costs or deadlines.</p></section></div>`;
-  editor=createHabitatView(q('#builder-canvas'),{...baseOptions,onCell:(next,hit)=>{if(hit)return;cell={...next};syncFields();preview()},onSelect:item=>select(item.kind==='perch'?'dragon:'+item.id:'piece:'+item.id)});
-  panel.addEventListener('click',click);panel.addEventListener('change',change);q('#builder-canvas').addEventListener('keydown',gridKey);
-  refresh();editor.fit();
+  panel.innerHTML=`<div class="build-layout"><section class="build-stage"><div class="build-toolbar" aria-label="Camera controls"><button id="build-pan" aria-pressed="false">Pan</button><button data-build-camera="fit">Fit</button><button data-build-camera="in" aria-label="Zoom in">+</button><button data-build-camera="out" aria-label="Zoom out">−</button><button data-build-camera="left" aria-label="Pan left">←</button><button data-build-camera="right" aria-label="Pan right">→</button><button data-build-camera="up" aria-label="Pan up">↑</button><button data-build-camera="down" aria-label="Pan down">↓</button></div><canvas id="builder-canvas" width="800" height="560" tabindex="0" aria-label="Habitat builder" aria-describedby="build-help build-validation"></canvas><p id="build-help" class="quiet-note">Drag a piece in. Drop on a block to stack. Drag empty ground to pan.</p><p id="build-status" role="status" aria-live="polite"></p></section><section class="build-box" aria-label="Building box"><div class="build-categories" role="group" aria-label="Piece category">${['Blocks','Paths','Nests','Keepsakes'].map(c=>`<button data-build-category="${c}" aria-pressed="${c===category}">${c}</button>`).join('')}</div><div id="build-palette" class="build-palette" aria-label="Drag a piece or choose one to place"></div><div class="build-edit-controls"><button id="build-rotate" class="secondary-button">Rotate 90°</button><button id="build-place" class="primary-button" disabled>Place</button><button id="build-remove" class="secondary-button" disabled>Remove</button><button id="build-undo" class="secondary-button" disabled>Undo</button></div><p id="build-validation" role="status" aria-live="polite"></p><label class="input-label" for="build-selection">Select something already here</label><select id="build-selection"><option value="">New piece</option></select><details class="build-help"><summary>Touch &amp; keyboard help</summary><p>Choose a piece, tap its destination, then Place. On the garden, use arrow keys to move the preview, R to rotate, Enter to place, and Escape to cancel. Swipe the piece tray sideways on a small screen.</p><p>Blocks support the next layer. Keep four ground spaces clear for your companions. Basic pieces are free. Undo remembers your last twenty edits.</p></details></section></div>`;
+  editor=createHabitatView(q('#builder-canvas'),{...baseOptions,controls:false});
+  panel.addEventListener('click',click);panel.addEventListener('change',change);panel.addEventListener('keydown',gridKey);
+  panel.addEventListener('pointerdown',pointerDown);panel.addEventListener('pointermove',pointerMove,{passive:false});panel.addEventListener('pointerup',pointerUp);panel.addEventListener('pointercancel',pointerCancel);panel.addEventListener('lostpointercapture',pointerCancel);
+  panel.addEventListener('dragstart',preventNativeDrag);q('#builder-canvas').addEventListener('wheel',wheel,{passive:false});window.addEventListener('blur',cancel);
+  rosterKey=paletteKey='';refresh();editor.fit();
  }
- function clearHandlers(){panel.removeEventListener('click',click);panel.removeEventListener('change',change)}
- function status(message){if(q('#build-status'))q('#build-status').textContent=message}
- function selectionOptions(){const h=host.getState().habitat;const key=JSON.stringify([h.placements.map(p=>[p.id,p.type,p.x,p.y,p.z]),h.perches,host.getState().dragons.map(d=>[d.id,d.name])]);if(key===rosterKey)return;rosterKey=key;q('#build-selection').innerHTML='<option value="">New piece</option>'+h.placements.map(p=>`<option value="piece:${p.id}">${escape(BUILD_PIECES[p.type].name)} · ${p.x+1},${p.y+1} · layer ${p.z}</option>`).join('')+h.perches.map(p=>`<option value="dragon:${p.dragonId}">${escape(host.dragonName(getDragon(host.getState(),p.dragonId)))} · ${p.x+1},${p.y+1}</option>`).join('');q('#build-selection').value=selection||''}
- function palette(){q('#build-palette').innerHTML=Object.entries(BUILD_PIECES).filter(([,p])=>p.category===category).map(([id,p])=>{const enabled=!p.unlock||unlocked().includes(p.unlock);return `<button class="piece-choice" data-build-piece="${id}" ${enabled?'':'disabled'} aria-pressed="${type===id&&mode==='place'}">${thumbnail(id)}<span>${escape(p.name)}</span>${enabled?'':`<small>${id==='victory-banner'?'Win a practice duel':id==='leafy-arch'?'Clear Grove rescue':id==='crystal-cluster'?'Clear Peaks rescue':id==='reed-lantern'?'Clear Lake rescue':'Sanctuary project'}</small>`}</button>`}).join('')}
- function syncFields(){q('#build-x').value=cell.x+1;q('#build-y').value=cell.y+1;q('#build-z').value=cell.z;q('#build-z').disabled=mode==='perch';editor?.setLayer(cell.z)}
- function select(value){selection=value||null;const h=host.getState().habitat;if(value?.startsWith('piece:')){const p=h.placements.find(v=>v.id===value.slice(6));if(!p)return;mode='move';type=p.type;rotation=p.rotation;cell={x:p.x,y:p.y,z:p.z};editor.setSelection(p.id)}else if(value?.startsWith('dragon:')){const p=h.perches.find(v=>v.dragonId===value.slice(7));if(!p)return;mode='perch';cell={x:p.x,y:p.y,z:0};editor.setSelection(p.dragonId)}else{mode='place';editor.setSelection(null)}q('#build-selection').value=selection||'';syncFields();palette();preview()}
- function preview(){if(!editor)return;const h=host.getState().habitat,placement={type,...cell,rotation};const result=mode==='perch'?canMovePerch(h,selection.slice(7),cell.x,cell.y):canPlacePiece(h,placement,{ignoreId:mode==='move'?selection.slice(6):undefined,unlocks:unlocked()});editor.setPreview(mode==='perch'?null:placement,result);q('#build-validation').textContent=result.ok?`${mode==='perch'?'Companion spot':BUILD_PIECES[type].name} · ${cell.x+1}, ${cell.y+1} · layer ${cell.z}${mode==='perch'?'':` · ${rotation}°`}`:result.reason;q('#build-place').disabled=!result.ok;q('#build-place').textContent=mode==='place'?'Place':mode==='perch'?'Move companion':'Move piece';q('#build-remove').disabled=mode!=='move';q('#build-rotate').disabled=mode==='perch';q('#build-undo').disabled=!history.canUndo}
- function commit(operation){const s=host.getState(),before=JSON.parse(JSON.stringify(s.habitat)),result=operation();if(!result.ok){status(result.reason);return}try{validateHabitat(s.habitat,s.dragons.map(d=>d.id),unlocked())}catch(error){s.habitat=before;status(error.message);return}history.checkpoint(before);host.changed(true);refresh();status('Habitat updated. '+(host.isSaved()?'Saved on this device.':'Keep this tab open: saving needs attention.'))}
- function click(e){const b=e.target.closest('button');if(!b)return;
-  if(b.dataset.buildCamera){const a=b.dataset.buildCamera;if(a==='fit')editor.fit();else if(a==='in'||a==='out')editor.zoomBy(a==='in'?1.25:.8);else editor.panBy(a==='left'?-60:a==='right'?60:0,a==='up'?-45:a==='down'?45:0);return}
-  if(b.dataset.buildCategory){category=b.dataset.buildCategory;panel.querySelectorAll('[data-build-category]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.buildCategory===category));palette();return}
-  if(b.dataset.buildPiece){type=b.dataset.buildPiece;mode='place';selection=null;rotation=0;q('#build-selection').value='';syncFields();palette();preview();return}
-  if(b.id==='build-rotate'){rotation=(rotation+90)%360;preview();return}
-  if(b.id==='build-place'){const h=host.getState().habitat,p={type,...cell,rotation};commit(()=>mode==='perch'?movePerch(h,selection.slice(7),cell.x,cell.y):mode==='move'?movePiece(h,selection.slice(6),p,{unlocks:unlocked()}):placePiece(h,p,{unlocks:unlocked()}));return}
-  if(b.id==='build-remove'){commit(()=>removePiece(host.getState().habitat,selection.slice(6)));if(!host.getState().habitat.placements.some(p=>'piece:'+p.id===selection))select(null);return}
-  if(b.id==='build-undo'){const previous=JSON.parse(JSON.stringify(host.getState().habitat));const undone=history.undo(previous);if(!undone.ok)return;try{host.getState().habitat=validateHabitat(previous,host.getState().dragons.map(d=>d.id),unlocked());selection=null;mode='place';host.changed(true);refresh();status('Undid the last edit.')}catch(error){status(error.message)}return}
+ function clearHandlers(){for(const [name,fn] of [['click',click],['change',change],['keydown',gridKey],['pointerdown',pointerDown],['pointermove',pointerMove],['pointerup',pointerUp],['pointercancel',pointerCancel],['lostpointercapture',pointerCancel],['dragstart',preventNativeDrag]])panel.removeEventListener(name,fn);q('#builder-canvas')?.removeEventListener('wheel',wheel);window.removeEventListener('blur',cancel)}
+ function status(message){const el=q('#build-status');if(el&&el.textContent!==message)el.textContent=message}
+ function selectionOptions(){const h=host.getState().habitat;const key=JSON.stringify([h.placements,h.perches,host.getState().dragons.map(d=>[d.id,d.name])]);if(key===rosterKey)return;rosterKey=key;q('#build-selection').innerHTML='<option value="">New piece</option>'+h.placements.map(p=>`<option value="piece:${p.id}">${escape(BUILD_PIECES[p.type].name)} · ${p.x+1},${p.y+1} · ${p.z?'stack '+p.z:'ground'}</option>`).join('')+h.perches.map(p=>`<option value="dragon:${p.dragonId}">${escape(host.dragonName(getDragon(host.getState(),p.dragonId)))} · ${p.x+1},${p.y+1}</option>`).join('');q('#build-selection').value=selection||''}
+ function palette(){const key=JSON.stringify([category,unlocked()]);if(key!==paletteKey){paletteKey=key;q('#build-palette').innerHTML=Object.entries(BUILD_PIECES).filter(([,p])=>p.category===category).map(([id,p])=>{const enabled=!p.unlock||unlocked().includes(p.unlock);return `<button class="piece-choice" data-build-piece="${id}" ${enabled?'':'disabled'} aria-pressed="false">${thumbnail(id)}<span>${escape(p.name)}</span>${enabled?'':`<small>${id==='victory-banner'?'Win a practice duel':id==='leafy-arch'?'Clear Grove rescue':id==='crystal-cluster'?'Clear Peaks rescue':id==='reed-lantern'?'Clear Lake rescue':'Sanctuary project'}</small>`}</button>`}).join('')}
+  panel.querySelectorAll('[data-build-piece]').forEach(b=>b.setAttribute('aria-pressed',String(type===b.dataset.buildPiece&&mode==='place'&&placing)));
  }
- function change(e){if(e.target.id==='build-selection'){select(e.target.value);return}if(['build-x','build-y','build-z'].includes(e.target.id)){cell={x:Number(q('#build-x').value)-1,y:Number(q('#build-y').value)-1,z:Number(q('#build-z').value)};editor.setLayer(cell.z);preview()}}
- function gridKey(e){const moves={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};if(moves[e.key]){e.preventDefault();cell.x=Math.max(0,Math.min(9,cell.x+moves[e.key][0]));cell.y=Math.max(0,Math.min(9,cell.y+moves[e.key][1]));syncFields();preview()}else if(e.key==='Enter'){e.preventDefault();q('#build-place').click()}}
- function syncHistoryRoster(s){
-  const next=JSON.stringify(s.dragons.map(d=>d.id).sort());
-  if(next===historyRoster)return;
-  const changed=historyRoster!==null;historyRoster=next;
-  if(!changed)return;
-  // A discovery adds a perch in place. Older snapshots must never remove it;
-  // naming, care, selection and ordinary renders retain the same valid history.
-  history.clear();selection=null;mode='place';rosterKey='';
-  if(editor){editor.setSelection(null);q('#build-selection').value='';syncFields();q('#build-undo').disabled=true}
+ function setPan(value){panTool=value;q('#build-pan')?.setAttribute('aria-pressed',String(value));q('#builder-canvas')?.classList.toggle('pan-tool',value)}
+ function choosePiece(id){if(!BUILD_PIECES[id]||BUILD_PIECES[id].unlock&&!unlocked().includes(BUILD_PIECES[id].unlock))return;type=id;mode='place';selection=null;rotation=0;cell=null;placing=true;setPan(false);editor.setSelection(null);q('#build-selection').value='';palette();preview()}
+ function select(value){selection=value||null;placing=true;const h=host.getState().habitat;if(value?.startsWith('piece:')){const p=h.placements.find(v=>v.id===value.slice(6));if(!p)return;mode='move';type=p.type;rotation=p.rotation;cell={x:p.x,y:p.y,z:p.z};editor.setSelection(p.id)}else if(value?.startsWith('dragon:')){const p=h.perches.find(v=>v.dragonId===value.slice(7));if(!p)return;mode='perch';cell={x:p.x,y:p.y,z:0};editor.setSelection(p.dragonId)}else{mode='place';cell=null;editor.setSelection(null)}q('#build-selection').value=selection||'';palette();preview()}
+ function validation(){if(!cell)return {ok:false,reason:'Choose a piece, then drag it in or tap a destination.'};const h=host.getState().habitat;return mode==='perch'?canMovePerch(h,selection.slice(7),cell.x,cell.y):canPlacePiece(h,{type,...cell,rotation},{ignoreId:movingId(),unlocks:unlocked()})}
+ function preview(message){if(!editor)return;const result=validation(),placement=cell?{type,...cell,rotation}:null;
+  editor.setPreview(mode==='perch'?null:placement,result);editor.setPerchPreview(mode==='perch'&&cell?{dragonId:selection.slice(7),...cell}:null,result);
+  const text=message||(result.ok?`${mode==='perch'?'Companion spot':BUILD_PIECES[type].name} · ${cell.x+1}, ${cell.y+1} · ${cell.z?'stack '+cell.z:'ground'}${mode==='perch'?'':` · ${rotation}°`}`:result.reason);
+  if(q('#build-validation').textContent!==text)q('#build-validation').textContent=text;
+  q('#build-place').disabled=!result.ok;q('#build-place').textContent=mode==='place'?'Place':mode==='perch'?'Move companion':'Move piece';q('#build-remove').disabled=mode!=='move';q('#build-rotate').disabled=mode==='perch';q('#build-undo').disabled=!history.canUndo;
  }
+ function commit(operation){const s=host.getState(),before=JSON.parse(JSON.stringify(s.habitat)),result=operation();if(!result.ok){status(result.reason);return false}try{validateHabitat(s.habitat,s.dragons.map(d=>d.id),unlocked())}catch(error){s.habitat=before;status(error.message);return false}
+  if(JSON.stringify(before)===JSON.stringify(s.habitat)){status('Already in that spot.');return true}
+  history.checkpoint(before);host.changed(true);refresh();status(host.isSaved()?'Garden updated. Saved.':'Not saved. Keep this tab open.');return true;
+ }
+ function place(){const result=validation();if(!result.ok){status(result.reason);return false}const h=host.getState().habitat,p={type,...cell,rotation};return commit(()=>mode==='perch'?movePerch(h,selection.slice(7),cell.x,cell.y):mode==='move'?movePiece(h,selection.slice(6),p,{unlocks:unlocked()}):placePiece(h,p,{unlocks:unlocked()}))}
+ function targetAt(clientX,clientY,offset={x:0,y:0}){const box=q('#builder-canvas').getBoundingClientRect();if(clientX<box.left||clientX>=box.right||clientY<box.top||clientY>=box.bottom){cell=null;preview('Release over the garden to place; release outside to cancel.');return}const s=editor.surfaceAt(clientX-offset.x,clientY-offset.y,{ignoreId:mode==='perch'?selection?.slice(7):movingId(),groundOnly:mode==='perch'});if(!s){cell=null;preview('Move over the garden or the top of a block.');return}const f=mode==='perch'?[1,1]:builderFootprint(type,rotation);cell={x:Math.floor(s.gridX-(f[0]-1)/2+.5),y:Math.floor(s.gridY-(f[1]-1)/2+.5),z:mode==='perch'?0:s.z};preview()}
+ function releaseCapture(id){try{if(panel.hasPointerCapture?.(id))panel.releasePointerCapture(id)}catch{}}
+ function endGesture(){const previous=gesture;gesture=null;carry?.remove();carry=null;panel.classList.remove('build-dragging');if(previous)releaseCapture(previous.id);return previous}
+ function cancel(){endGesture();cell=null;if(editor){editor.setPreview(null);editor.setPerchPreview(null);preview()}}
+ function pointerCancel(e){if(gesture&&e.pointerId===gesture.id)cancel()}
+ function preventNativeDrag(e){if(e.target.closest('[data-build-piece]'))e.preventDefault()}
+ function pointerDown(e){if(gesture||e.button!=null&&e.button!==0||host.modalOpen()||host.getView()!=='build')return;
+  const button=e.target.closest('[data-build-piece]'),canvas=q('#builder-canvas');if(button?.disabled)return;if(!button&&e.target!==canvas)return;
+  const hit=button?null:editor.hitAt(e.clientX,e.clientY);const kind=button?'palette':panTool?'pan':hit?'object':'background';
+  if(button)choosePiece(button.dataset.buildPiece);
+  gesture={id:e.pointerId,kind,hit,startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastY:e.clientY,moved:false,offset:{x:0,y:0}};
+  try{panel.setPointerCapture(e.pointerId)}catch{};
+ }
+ function pointerMove(e){const g=gesture;if(!g||g.id!==e.pointerId)return;if(!g.moved&&Math.hypot(e.clientX-g.startX,e.clientY-g.startY)>7){g.moved=true;panel.classList.add('build-dragging');
+   if(g.kind==='object'){const hit=g.hit;select(hit.kind==='perch'?'dragon:'+hit.id:'piece:'+hit.id);const f=mode==='perch'?[1,1]:builderFootprint(type,rotation),p=editor.project(cell.x+(f[0]-1)/2,cell.y+(f[1]-1)/2,cell.z),box=q('#builder-canvas').getBoundingClientRect();g.offset={x:g.startX-box.left-p.x,y:g.startY-box.top-p.y};}
+  }
+  if(g.moved){e.preventDefault();if(g.kind==='pan'||g.kind==='background'){cell=null;editor.setPreview(null);editor.setPerchPreview(null);editor.panBy(e.clientX-g.lastX,e.clientY-g.lastY)}else targetAt(e.clientX,e.clientY,g.offset)}
+  if(g.moved&&(g.kind==='palette'||g.kind==='object')){if(!carry&&mode!=='perch'){carry=document.createElement('div');carry.className='build-carry';carry.setAttribute('aria-hidden','true');carry.innerHTML=thumbnail(type);document.body.append(carry)}if(carry){carry.style.left=(e.clientX-36)+'px';carry.style.top=(e.clientY-52)+'px';carry.hidden=!!cell}}
+  g.lastX=e.clientX;g.lastY=e.clientY;
+ }
+ function pointerUp(e){if(!gesture||gesture.id!==e.pointerId)return;const g=endGesture();
+  if(g.moved){suppressClickUntil=performance.now()+500;if(g.kind==='palette'||g.kind==='object'){targetAt(e.clientX,e.clientY,g.offset);if(cell){if(place()){cell=null;preview()}else{cell=null;preview('That drop did not fit. Your garden is unchanged.')}}else status('Drop cancelled. Your garden is unchanged.')}else preview();return}
+  if(g.kind==='palette')return;
+  if(g.kind==='pan')return;
+  if(g.hit&&!placing){select(g.hit.kind==='perch'?'dragon:'+g.hit.id:'piece:'+g.hit.id);return}
+  targetAt(e.clientX,e.clientY);
+ }
+ function rotate(){if(mode==='perch')return;rotation=(rotation+90)%360;if(gesture?.moved)targetAt(gesture.lastX,gesture.lastY,gesture.offset);else preview()}
+ function click(e){const b=e.target.closest('button');if(!b)return;if(e.detail>0&&performance.now()<suppressClickUntil&&(b.dataset.buildPiece||e.target===q('#builder-canvas'))){e.preventDefault();return}
+  if(b.id==='build-pan'){cancel();setPan(!panTool);status(panTool?'Pan tool on. Drag anywhere to move the view.':'Build tool on. Drag pieces to move them.');return}
+  if(b.dataset.buildCamera){cancel();const a=b.dataset.buildCamera;if(a==='fit')editor.fit();else if(a==='in'||a==='out')editor.zoomBy(a==='in'?1.25:.8);else editor.panBy(a==='left'?-60:a==='right'?60:0,a==='up'?-45:a==='down'?45:0);return}
+  if(b.dataset.buildCategory){cancel();category=b.dataset.buildCategory;panel.querySelectorAll('[data-build-category]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.buildCategory===category));palette();return}
+  if(b.dataset.buildPiece){choosePiece(b.dataset.buildPiece);if(e.detail===0)q('#builder-canvas').focus({preventScroll:true});return}
+  if(b.id==='build-rotate'){rotate();return}
+  if(b.id==='build-place'){if(place()){cell=null;preview()}return}
+  if(b.id==='build-remove'){cancel();commit(()=>removePiece(host.getState().habitat,selection.slice(6)));if(!host.getState().habitat.placements.some(p=>'piece:'+p.id===selection))select(null);return}
+  if(b.id==='build-undo'){cancel();const previous=JSON.parse(JSON.stringify(host.getState().habitat)),undone=history.undo(previous);if(!undone.ok)return;try{host.getState().habitat=validateHabitat(previous,host.getState().dragons.map(d=>d.id),unlocked());selection=null;mode='place';placing=false;editor.setSelection(null);host.changed(true);refresh();status('Undid the last edit. '+(host.isSaved()?'Saved on this device.':'Keep this tab open: saving needs attention.'))}catch(error){status(error.message)}return}
+ }
+ function change(e){if(e.target.id==='build-selection'){cancel();setPan(false);select(e.target.value)}}
+ function keyboardTarget(x,y){let z=0;if(mode!=='perch'){const pieces=host.getState().habitat.placements.filter(p=>p.id!==movingId()&&pieceCells(p).some(c=>c.x===x&&c.y===y));for(const p of pieces)z=Math.max(z,p.z+(BUILD_PIECES[p.type].support?1:0))}cell={x,y,z};preview()}
+ function gridKey(e){if(e.key==='Escape'){e.preventDefault();cancel();placing=false;setPan(false);status('Placement cancelled.');palette();return}if(e.target!==q('#builder-canvas'))return;
+  const moves={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};if(moves[e.key]){e.preventDefault();setPan(false);const at=cell||{x:4,y:4};keyboardTarget(Math.max(0,Math.min(9,at.x+moves[e.key][0])),Math.max(0,Math.min(9,at.y+moves[e.key][1])))}else if(e.key==='Enter'){e.preventDefault();if(!e.repeat&&place()){cell=null;preview()}}else if(e.key.toLowerCase()==='r'){e.preventDefault();if(!e.repeat)rotate()}}
+ function wheel(e){e.preventDefault();if(gesture)return;editor.zoomBy(e.deltaY<0?1.15:1/1.15)}
+ function syncHistoryRoster(s){const next=JSON.stringify(s.dragons.map(d=>d.id).sort());if(next===historyRoster)return;const changed=historyRoster!==null;historyRoster=next;if(!changed)return;cancel();history.clear();selection=null;mode='place';placing=false;rosterKey='';if(editor){editor.setSelection(null);q('#build-selection').value='';q('#build-undo').disabled=true}}
  function homeRefresh(){const s=host.getState();if(!s||s.onboarding.phase!=='adopted')return;syncHistoryRoster(s);if(!home)home=createHabitatView(homeCanvas,{...baseOptions,interactive:false});home.setState(s.habitat);home.fit()}
  function refresh(){const s=host.getState();if(!s)return;syncHistoryRoster(s);if(editor){editor.setState(s.habitat);selectionOptions();palette();preview()}homeRefresh()}
- function reset(){history=createBuilderHistory(20);selection=null;mode='place';rosterKey='';historyRoster=null;editor?.destroy();editor=null;clearHandlers();home?.destroy();home=null}
- return {enter:setup,refresh,homeRefresh,reset};
+ function reset(){cancel();history=createBuilderHistory(20);selection=null;mode='place';placing=false;panTool=false;rosterKey=paletteKey='';historyRoster=null;clearHandlers();editor?.destroy();editor=null;home?.destroy();home=null}
+ return {enter:setup,refresh,homeRefresh,cancel,leave:cancel,reset};
 }
 
 
@@ -1455,11 +1564,11 @@ const headlines=['Hello in there?','Ready, little buddy?','New shape. Same frien
 function toast(message){clearTimeout(toastTimer);$('#toast').textContent=message;$('#toast').classList.add('show');toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),3400)}
 function chime(){const now=performance.now();if(!state?.sound||now-lastChime<240)return;lastChime=now;try{audioContext??=new (window.AudioContext||window.webkitAudioContext)();audioContext.resume();const o=audioContext.createOscillator(),g=audioContext.createGain(),t=audioContext.currentTime;o.type='square';o.frequency.value=659.25;g.gain.setValueAtTime(.012,t);g.gain.exponentialRampToValueAtTime(.001,t+.16);o.connect(g);g.connect(audioContext.destination);o.start(t);o.stop(t+.18)}catch{}}
 function feedback(result){earnedGrowth+=result.xp;clearTimeout(earnedTimer);$('#growth-earned').textContent=`+${earnedGrowth.toLocaleString()} growth`;earnedTimer=setTimeout(()=>{earnedGrowth=0;$('#growth-earned').textContent=''},1500);chime();if(!$('#creature').classList.contains('petted')){$('#creature').classList.add('petted');setTimeout(()=>$('#creature').classList.remove('petted'),750)}if(performance.now()-lastFeedback<180)return;lastFeedback=performance.now();const el=document.createElement('span');el.className='float';el.textContent=`+${result.xp} growth`;el.style.left='45%';$('#float-layer').replaceChildren(el);setTimeout(()=>el.remove(),1600)}
-function openModal(html,owner=null){stopCare();activities?.pause();modalOwner=owner;$('#modal-content').innerHTML=html;const title=$('#modal-content h2');if(title){title.id='modal-title';modal.setAttribute('aria-labelledby','modal-title')}if(!modal.open)modal.showModal()}
+function openModal(html,owner=null){stopCare();activities?.pause();workshop?.cancel();modalOwner=owner;$('#modal-content').innerHTML=html;const title=$('#modal-content h2');if(title){title.id='modal-title';modal.setAttribute('aria-labelledby','modal-title')}if(!modal.open)modal.showModal()}
 function closeModal(){stopCare();game=null;if(activeRevealId){acknowledgeReveal(state,activeRevealId);activeRevealId=null;save()}modalOwner=null;modal.close();render()}
 function confirmReset(){openModal(`<div class="modal-eyebrow">A NEW BEGINNING</div><h2>Start a new sanctuary?</h2><p>This replaces all four companions, memories, stardust, and home projects in this browser's current Pocket journey. The illustrated edition is separate.</p><button class="secondary-button full" data-close>Keep my sanctuary</button><button class="danger-button full" id="reset-confirm">Yes, begin again</button>`)}
 function showView(next){
- stopCare();if(!state)return renderRecovery();if(state.onboarding.phase!=='adopted')return renderOnboarding();
+ workshop?.leave();stopCare();if(!state)return renderRecovery();if(state.onboarding.phase!=='adopted')return renderOnboarding();
  if(next!=='activity')activities?.stop();view=['sanctuary','explore','build','arena','activity','journal','guide'].includes(next)?next:'sanctuary';
  if(view==='activity'&&!state.activity)view='explore';
  $$('.page-view').forEach(e=>e.classList.toggle('hidden',e.id!==`${view}-view`));
@@ -1565,7 +1674,7 @@ $('.skip-link').addEventListener('click',e=>{e.preventDefault();$('#game-main').
 $$('a[href="#sanctuary"]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();showView('sanctuary')}));
 $$('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));$('#fireflies').innerHTML=Array.from({length:10},(_,i)=>`<span class="firefly" style="left:${12+i*7}%;top:${29+(i*17)%50}%;animation-delay:-${i*.7}s"></span>`).join('');
 setInterval(()=>{if(!state||document.hidden||modal.open||view!=='sanctuary')return;const d=getActiveDragon(state);if(!d||stageOf(d.xp)===0||d.pendingReveal)return;d.fullness=clamp(d.fullness-2);d.energy=clamp(d.energy-1);d.joy=clamp(d.joy-1);changed()},60000);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){stopCare();activities?.pause();if(state)save()}});window.addEventListener('pagehide',()=>{stopCare();activities?.pause();if(state)save()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){stopCare();activities?.pause();workshop?.cancel();if(state)save()}});window.addEventListener('pagehide',()=>{stopCare();activities?.pause();workshop?.cancel();if(state)save()});
 // A newer snapshot from another tab replaces this tab before further interaction.
 window.addEventListener('storage',e=>{if(e.key!==SAVE_KEY)return;stopCare();activities?.stop(false);workshop?.reset();tutorialKey='';clearTimeout(saveTimer);saveTimer=0;activeRevealId=null;game=null;if(modal.open)modal.close();loaded=readSave();state=loaded.state;loadError=loaded.error;portraitKey=actionKey=familyKey='';render();showView(view);toast('Your sanctuary was updated in another tab.');const d=state&&getActiveDragon(state);if(d?.pendingReveal)evolution(d.id)});
 
@@ -1578,7 +1687,7 @@ function renderTutorial(){
 }
 function featureIntroduction(){
  if(modal.open||!state||state.onboarding.phase!=='adopted')return;const d=getActiveDragon(state),kind=view==='build'&&state.dragons.some(friend=>stageOf(friend.xp)>=1)?'builder':view==='explore'&&stageOf(d.xp)===3?'explore':view==='arena'&&stageOf(d.xp)===3?'arena':null;
- if(!kind||state.tutorial.seen.includes(kind))return;state.tutorial.seen.push(kind);save();const copy={builder:['Your building box is open.','Choose a piece, then a square. The preview shows where it will go; Place confirms it. Stack supported blocks, move anything freely, and undo your last twenty edits. Your companions each need a clear ground spot.'],explore:['Choose your kind of journey.','A story expedition is three quiet choices. A rescue is a little playable trail: reach the nest to bring home a missing egg. Energy is charged once, and you can pause and continue later.'],arena:['A friendly challenge.','Move with arrows, strike with J, hold K to guard, and use L for your element. Watch the golem’s wind-up. Combat HP stays separate from care, and every round ends safely at home.']}[kind];openModal(`<div class="modal-eyebrow">A NEW CHAPTER</div><h2>${copy[0]}</h2><p>${copy[1]}</p><button class="primary-button full" data-close>Let’s try it</button>`);
+ if(!kind||state.tutorial.seen.includes(kind))return;state.tutorial.seen.push(kind);save();const copy={builder:['Your building box is open.','Drag a piece into the garden and release to place it. Drop onto a block to stack automatically. Green means it fits; red explains what needs room. You can also choose a piece, tap a spot, then Place. Drag existing pieces to move them, and Undo your last twenty edits.'],explore:['Choose your kind of journey.','A story expedition is three quiet choices. A rescue is a little playable trail: reach the nest to bring home a missing egg. Energy is charged once, and you can pause and continue later.'],arena:['A friendly challenge.','Move with arrows, strike with J, hold K to guard, and use L for your element. Watch the golem’s wind-up. Combat HP stays separate from care, and every round ends safely at home.']}[kind];openModal(`<div class="modal-eyebrow">A NEW CHAPTER</div><h2>${copy[0]}</h2><p>${copy[1]}</p><button class="primary-button full" data-close>Let’s try it</button>`);
 }
 function activityReward(result){
  const egg=result.eggId?getDragon(state,result.eggId):null,decor=result.decoration?`<p>A new keepsake is in your building box: ${esc(result.decoration.replaceAll('-',' '))}.</p>`:'';
